@@ -1,0 +1,10 @@
+[
+  {"id": 1, "question": "Что такое репозиторий пакетов согласно документам?", "expected_in_documents": true},
+  {"id": 2, "question": "Как обновить список доступных пакетов?", "expected_in_documents": true},
+  {"id": 3, "question": "Как установить пакет?", "expected_in_documents": true},
+  {"id": 4, "question": "Как удалить установленный пакет?", "expected_in_documents": true},
+  {"id": 5, "question": "Какие ветки репозитория описаны в документах?", "expected_in_documents": true},
+  {"id": 6, "question": "Какие источники пакетов рекомендуется настроить?", "expected_in_documents": true},
+  {"id": 7, "question": "Какова температура поверхности Венеры?", "expected_in_documents": false}
+]
+
