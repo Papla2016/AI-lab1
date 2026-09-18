@@ -6,16 +6,18 @@ from .bm25_retriever import BM25Retriever
 from .hybrid_retriever import reciprocal_rank_fusion
 from .llm import LLM
 from .reranker import Reranker
-from .router import Route, route
+from .router import LLMRouter, Route, Router
 from .schemas import INSUFFICIENT, RAGAnswer, SearchResult
 from .vector_store import VectorStore
 
 class RAGPipeline:
     def __init__(self, store: VectorStore, llm: LLM, prompts_dir: Path, top_n: int = 12, final_k: int = 5,
-                 min_score: float = .2, rrf_k: int = 60, reranker: Reranker | None = None) -> None:
+                 min_score: float = .2, rrf_k: int = 60, reranker: Reranker | None = None,
+                 router: Router | None = None) -> None:
         self.store, self.llm, self.prompts_dir = store, llm, prompts_dir
         self.top_n, self.final_k, self.min_score, self.rrf_k = top_n, final_k, min_score, rrf_k
         self.reranker = reranker or Reranker("", False)
+        self.router = router or LLMRouter(llm, prompts_dir)
 
     def retrieve(self, question: str, mode: str) -> tuple[list[SearchResult], list[SearchResult]]:
         dense = self.store.search(question, self.top_n)
@@ -31,7 +33,7 @@ class RAGPipeline:
         return system, user, context
 
     def ask(self, question: str, mode: str, strategy: str, debug: bool = False) -> tuple[RAGAnswer, dict]:
-        decision = route(question)
+        decision = self.router.classify(question)
         trace: dict = {"question": question, "router": decision.value, "retrieval_mode": mode}
         if decision is Route.GENERAL_OR_OUT_OF_SCOPE:
             return INSUFFICIENT.model_copy(), trace
@@ -43,6 +45,16 @@ class RAGPipeline:
             return INSUFFICIENT.model_copy(), trace
         system, user, context = self._prompt(question, after, strategy)
         trace.update(context=context, final_prompt=f"SYSTEM:\n{system}\n\nUSER:\n{user}")
+        if strategy == "cot_structured":
+            evidence_prompt = (self.prompts_dir / "cot_structured.md").read_text(encoding="utf-8").format(
+                question=question, context=context)
+            # The evidence call deliberately omits the final RAGAnswer schema; it has
+            # its own compact output contract and never asks for hidden reasoning.
+            evidence_system = (self.prompts_dir / "system.md").read_text(encoding="utf-8")
+            evidence = self.llm.generate(evidence_system, evidence_prompt)
+            trace["evidence_selection"] = evidence
+            user += f"\n\nПредварительно выбранные моделью доказательства: {evidence}\nТеперь верните только итоговый RAGAnswer JSON."
+            trace["final_prompt"] = f"SYSTEM:\n{system}\n\nUSER:\n{user}"
         raw = self.llm.generate(system, user)
         for attempt in range(2):
             try:
@@ -50,9 +62,12 @@ class RAGPipeline:
                 allowed = {(x.metadata["source"], x.metadata["chunk_id"]) for x in after}
                 if any((c.source, c.chunk_id) not in allowed for c in answer.citations):
                     raise ValueError("citation is not present in context")
+                if answer.insufficient_context and answer.citations:
+                    raise ValueError("an insufficient answer must not contain citations")
+                if not answer.insufficient_context and not answer.citations:
+                    raise ValueError("a sufficient answer must contain at least one citation")
                 return answer, trace
             except (ValidationError, ValueError, json.JSONDecodeError) as exc:
                 if attempt == 0:
                     raw = self.llm.generate(system, user + f"\n\nИсправьте JSON. Ошибка проверки: {exc}")
         raise ValueError("LLM twice returned invalid structured output or citations")
-

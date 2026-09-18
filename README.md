@@ -49,9 +49,10 @@ JSON выдачи содержит score, source, page, chunk_id и полный
 ```bash
 python -m src.main ask "Чем отличается Sisyphus от стабильной ветки?" --retrieval hybrid --prompt few_shot --debug
 python -m src.main ask "Как работает apt?" --retrieval dense --prompt zero_shot
+python -m src.main ask "Как работает apt?" --retrieval hybrid --prompt cot_structured
 ```
 
-`--debug` печатает вопрос, router, режим, кандидатов до/после rerank, scores, context и итоговый prompt, но не конфигурацию и не секреты. `--prompt` принимает `zero_shot`, `few_shot`, `structured` (последний — zero-shot с обязательной финальной схемой). Reranking включается `RERANK_ENABLED=true`; тогда top-N кандидатов оценивает локальный cross-encoder и оставляет `FINAL_K` с неизменёнными metadata.
+`--debug` печатает вопрос, решение LLM-router, режим, кандидатов до/после rerank, scores, context и итоговый prompt, но не конфигурацию и не секреты. `--prompt` принимает три действительно разных режима: `zero_shot` содержит только grounded-инструкции; `few_shot` добавляет три примера; `cot_structured` выполняет отдельный краткий выбор релевантных chunk IDs (без запроса длинной цепочки рассуждений), а затем формирует ответ. Итог каждого режима всё равно проверяется одной схемой `RAGAnswer`. Reranking включается `RERANK_ENABLED=true`; тогда top-N кандидатов оценивает локальный cross-encoder и оставляет `FINAL_K` с неизменёнными metadata.
 
 Пример формы ответа (конкретные значения появятся только из вашего корпуса):
 
@@ -64,7 +65,7 @@ python -m src.main ask "Как работает apt?" --retrieval dense --prompt
 }
 ```
 
-Citation допускается только для реально переданного chunk. Неверная схема или выдуманная citation вызывает один исправляющий retry, затем явную ошибку. Пустой/слабый retrieval (`MIN_DENSE_SCORE`) возвращает детерминированный `insufficient_context=true`, не обращаясь к LLM. Router также пропускает retrieval для явно разговорных запросов; прочие вопросы направляет к документам консервативно, чтобы не отбрасывать предметные формулировки.
+Citation допускается только для реально переданного chunk. Достаточный ответ обязан иметь хотя бы одну citation, а недостаточный — иметь пустой список. Неверная комбинация, схема или выдуманная citation вызывает один исправляющий retry, затем явную ошибку. Пустой/слабый retrieval (`MIN_DENSE_SCORE`) возвращает детерминированный `insufficient_context=true`. Перед retrieval небольшой structured LLM-router отделяет вопросы по документам от беседы и явно посторонних тем; при `GENERAL_OR_OUT_OF_SCOPE` поиск не выполняется.
 
 ## Evaluation и anti-hallucination
 
@@ -75,7 +76,7 @@ python -m evaluation.evaluate --output evaluation/results.md
 pytest -q
 ```
 
-Скрипт прогоняет 7 вопросов через dense/hybrid и zero-shot/few-shot/structured, сохраняя sources, chunk IDs и ответы. Последний вопрос намеренно вне предполагаемого корпуса. Неграундированная LLM могла бы правдоподобно угадать ответ, но данный pipeline должен отсечь слабый retrieval либо вернуть недостаточность по prompt. Это результат эксперимента, а не заранее заявленная метрика: перенесите фактические наблюдения в `report.md`. Инструкции внутри документов изолированы delimiters CONTEXT и system prompt требует считать их данными, что защищает от простой prompt injection (но не является абсолютной sandbox-защитой).
+Скрипт прогоняет 7 вопросов через dense/hybrid и zero-shot/few-shot/cot-structured, сохраняя sources, chunk IDs и ответы. Для последнего, намеренно постороннего вопроса он сначала получает реальный no-RAG ответ той же LLM, а затем сравнивает его с grounded RAG. Ничего не предзаписано: перенесите фактические наблюдения в `report.md`. Отдельный запуск baseline доступен как `python -m src.main baseline "Какова температура поверхности Венеры?"`; он не делает retrieval и не передаёт CONTEXT. Инструкции внутри документов изолированы delimiters CONTEXT и system prompt требует считать их данными, что защищает от простой prompt injection (но не является абсолютной sandbox-защитой).
 
 ## Диагностика
 
@@ -84,4 +85,3 @@ pytest -q
 * Пустой индекс даёт пустой search/недостаточный контекст.
 * Ошибка соединения при `ask` означает, что OpenAI-compatible сервер не запущен или `.env` неверен.
 * Настройки моделей, порогов, top-N и final-k документированы в `.env.example`.
-

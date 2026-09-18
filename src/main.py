@@ -16,13 +16,14 @@ def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(description="Лабораторный RAG-конвейер")
     sub = root.add_subparsers(dest="command", required=True)
     sub.add_parser("index", help="переиндексировать документы из data/")
-    for name, help_text in (("search", "выполнить retrieval без LLM"), ("ask", "получить RAG-ответ")):
+    for name, help_text in (("search", "выполнить retrieval без генерации"), ("ask", "получить RAG-ответ"),
+                            ("baseline", "спросить LLM напрямую, без RAG")):
         command = sub.add_parser(name, help=help_text)
         command.add_argument("question")
         command.add_argument("--retrieval", choices=["dense", "hybrid"])
         command.add_argument("--top-k", type=int)
         command.add_argument("--debug", action="store_true")
-        if name == "ask": command.add_argument("--prompt", choices=["zero_shot", "few_shot", "structured"], default="zero_shot")
+        if name == "ask": command.add_argument("--prompt", choices=["zero_shot", "few_shot", "cot_structured"], default="zero_shot")
     return root
 
 def components(settings: Settings) -> tuple[VectorStore, SentenceTransformerEmbeddings]:
@@ -44,9 +45,14 @@ def main() -> None:
         store.replace(chunks)
         print(f"Проиндексировано документов: {len(documents)}, чанков: {len(chunks)}")
         return
+    llm = OpenAICompatibleLLM(settings.llm_base_url, settings.llm_api_key, settings.llm_model)
+    if args.command == "baseline":
+        prompt = (settings.prompts_dir / "baseline.md").read_text(encoding="utf-8")
+        print(llm.generate(prompt, args.question))
+        return
     store, _ = components(settings)
     mode, k = args.retrieval or settings.retrieval_mode, args.top_k or settings.top_n
-    pipeline = RAGPipeline(store, OpenAICompatibleLLM(settings.llm_base_url, settings.llm_api_key, settings.llm_model),
+    pipeline = RAGPipeline(store, llm,
         settings.prompts_dir, k, settings.final_k, settings.min_dense_score, settings.rrf_k,
         Reranker(settings.rerank_model, settings.rerank_enabled))
     if args.command == "search":

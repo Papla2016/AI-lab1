@@ -19,9 +19,14 @@ def main() -> None:
         cfg.top_n, cfg.final_k, cfg.min_dense_score, cfg.rrf_k, Reranker(cfg.rerank_model, cfg.rerank_enabled))
     questions = json.loads((ROOT / "evaluation/questions.json").read_text())
     rows = ["# Результаты evaluation", "", "Результаты получены реальным запуском; файл можно пересоздать.", ""]
+    out_of_corpus = next(q for q in questions if not q["expected_in_documents"])
+    baseline_prompt = (cfg.prompts_dir / "baseline.md").read_text(encoding="utf-8")
+    baseline = pipeline.llm.generate(baseline_prompt, out_of_corpus["question"])
+    rows += ["## No-RAG baseline (anti-hallucination comparison)", "",
+             f"**Question:** {out_of_corpus['question']}", "", "```text", baseline, "```", ""]
     for q in questions:
         for mode in ("dense", "hybrid"):
-            for strategy in ("zero_shot", "few_shot", "structured"):
+            for strategy in ("zero_shot", "few_shot", "cot_structured"):
                 answer, trace = pipeline.ask(q["question"], mode, strategy)
                 retrieved = trace.get("after_rerank", [])
                 rows += [f"## Q{q['id']} · {mode} · {strategy}", "", f"**Question:** {q['question']}",
@@ -32,4 +37,3 @@ def main() -> None:
     print(args.output)
 
 if __name__ == "__main__": main()
-
