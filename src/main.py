@@ -2,14 +2,11 @@
 import argparse
 import json
 import logging
-from .chunking import chunk_documents
+from .backend import ChatService, default_store
 from .config import Settings
 from .embeddings import SentenceTransformerEmbeddings
-from .llm import OpenAICompatibleLLM
-from .loaders import load_documents
-from .rag import RAGPipeline
-from .reranker import Reranker
-from .schemas import SearchResult
+from .llm import LLMError
+from .rag import serialise_result
 from .vector_store import VectorStore
 
 def parser() -> argparse.ArgumentParser:
@@ -27,45 +24,47 @@ def parser() -> argparse.ArgumentParser:
     return root
 
 def components(settings: Settings) -> tuple[VectorStore, SentenceTransformerEmbeddings]:
-    embeddings = SentenceTransformerEmbeddings(settings.embedding_model)
-    return VectorStore(settings.storage_dir, settings.collection_name, embeddings), embeddings
-
-def serialise_result(item: SearchResult) -> dict:
-    return {"score": round(item.score, 6), "source": item.metadata["source"], "page": item.metadata.get("page"),
-            "chunk_id": item.metadata["chunk_id"], "text": item.text}
+    store = default_store(settings)
+    return store, store.embeddings
 
 def main() -> None:
     args, settings = parser().parse_args(), Settings()
     logging.basicConfig(level=logging.DEBUG if getattr(args, "debug", False) else logging.INFO, format="%(levelname)s: %(message)s")
+    # Avoid request-level logging, which can contain Authorization headers and
+    # credentials embedded in URLs, even when application diagnostics are on.
+    for logger_name in ("openai", "httpx", "httpcore"):
+        logging.getLogger(logger_name).setLevel(logging.WARNING)
+    try:
+        _run(args, settings, ChatService(settings))
+    except (LLMError, ValueError) as exc:
+        raise SystemExit(str(exc)) from None
+
+
+def _run(args: argparse.Namespace, settings: Settings, service: ChatService) -> None:
     if args.command == "index":
-        documents = load_documents(settings.data_dir)
-        if not documents: raise SystemExit("В data/ нет читаемых PDF, Markdown или TXT документов.")
-        chunks = chunk_documents(documents, settings.chunk_size, settings.chunk_overlap)
-        store, _ = components(settings)
-        store.replace(chunks)
-        print(f"Проиндексировано документов: {len(documents)}, чанков: {len(chunks)}")
+        report = service.index_documents()
+        for error in report.errors:
+            logging.warning(error)
+        if not report.chunk_count:
+            raise SystemExit("В data/ нет читаемых PDF, Markdown или TXT документов.")
+        print(f"Проиндексировано документов: {report.document_count}, чанков: {report.chunk_count}")
         return
-    llm = OpenAICompatibleLLM(settings.llm_base_url, settings.llm_api_key, settings.llm_model)
     if args.command == "baseline":
         prompt = (settings.prompts_dir / "baseline.md").read_text(encoding="utf-8")
-        print(llm.generate(prompt, args.question))
+        print(service.respond(args.question, mode="chat", instructions=prompt).text)
         return
-    store, _ = components(settings)
-    mode, k = args.retrieval or settings.retrieval_mode, args.top_k or settings.top_n
-    pipeline = RAGPipeline(store, llm,
-        settings.prompts_dir, k, settings.final_k, settings.min_dense_score, settings.rrf_k,
-        Reranker(settings.rerank_model, settings.rerank_enabled))
+    mode = args.retrieval or settings.retrieval_mode
+    k = settings.top_n if args.top_k is None else args.top_k
     if args.command == "search":
-        before, _ = pipeline.retrieve(args.question, mode)
+        before, _ = service.search(args.question, retrieval=mode, top_k=k, rerank=settings.rerank_enabled)
         print(json.dumps([serialise_result(x) for x in before[:k]], ensure_ascii=False, indent=2))
         return
-    answer, trace = pipeline.ask(args.question, mode, args.prompt, args.debug)
+    response = service.respond(args.question, mode="rag", retrieval=mode, strategy=args.prompt,
+                               top_k=k, rerank=settings.rerank_enabled, debug=args.debug, classify_rag=True)
     if args.debug:
-        printable = dict(trace)
-        for key in ("before_rerank", "after_rerank"): printable[key] = [serialise_result(x) for x in printable.get(key, [])]
         print("=== DEBUG (секреты не включены) ===")
-        print(json.dumps(printable, ensure_ascii=False, indent=2))
+        print(json.dumps(response.trace, ensure_ascii=False, indent=2))
         print("=== END DEBUG ===")
-    print(answer.model_dump_json(indent=2))
+    print(response.answer.model_dump_json(indent=2))
 
 if __name__ == "__main__": main()

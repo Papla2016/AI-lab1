@@ -8,3 +8,5 @@ data/*
 !data/.gitkeep
 evaluation/results.*
 
+evaluation/results/
+evaluation/user_questions.json

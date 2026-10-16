@@ -23,10 +23,15 @@ class VectorStore:
                 metadatas=[d.metadata for d in batch], embeddings=self.embeddings.encode_documents([d.text for d in batch]))
 
     def all(self) -> list[Document]:
+        # Another browser session can replace the named collection. Chroma
+        # collection objects retain the old ID after deletion/recreation, so
+        # resolve its current handle before every read.
+        self.collection = self.client.get_collection(name=self.name)
         result = self.collection.get(include=["documents", "metadatas"])
         return [Document(text=t, metadata=m) for t, m in zip(result["documents"], result["metadatas"])]
 
     def search(self, query: str, k: int) -> list[SearchResult]:
+        self.collection = self.client.get_collection(name=self.name)
         if self.collection.count() == 0:
             return []
         result = self.collection.query(query_embeddings=[self.embeddings.encode_query(query)], n_results=min(k, self.collection.count()), include=["documents", "metadatas", "distances"])
