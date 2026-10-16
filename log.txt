@@ -1,0 +1,29 @@
+Rclone connection check
+=======================
+
+Timestamp (UTC): 2026-09-28 09:05:45
+Rclone version: 1.60.1
+Backend tested: Mail.ru Cloud (mailru)
+Account: test_rclone@mail.ru
+Operation: read-only root directory listing (`rclone lsd`)
+
+Configuration result: SUCCESS (exit code 0)
+Connection result: FAILED (exit code 1)
+Remote listing returned: no entries
+
+Rclone error:
+Failed to create file system for "mailru-check:": failed to authorize:
+oauth2: "invalid username or password" "username or password is incorrect"
+
+Conclusion:
+Rclone could reach the Mail.ru Cloud authentication service, but the supplied
+credentials were rejected. The installed rclone backend documentation states
+that Mail.ru Cloud requires an application password and does not accept the
+normal account password. Create an application password in the Mail.ru account
+security settings and repeat the check with that password.
+
+Security notes:
+- The supplied password is intentionally not recorded in this log.
+- The temporary rclone configuration and captured command output were deleted
+  after the check.
+- The check was read-only; it did not create, modify, or delete remote files.
