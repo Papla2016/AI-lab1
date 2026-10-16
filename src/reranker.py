@@ -6,7 +6,7 @@ class Reranker:
         self.model = None
         if enabled:
             from sentence_transformers import CrossEncoder
-            self.model = CrossEncoder(model_name)
+            self.model = CrossEncoder(model_name, device="cpu")
 
     def rerank(self, query: str, results: list[SearchResult], k: int) -> list[SearchResult]:
         if not self.model: return results[:k]

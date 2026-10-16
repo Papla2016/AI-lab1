@@ -7,4 +7,5 @@ pydantic-settings>=2.2,<3
 openai>=1.40,<3
 python-dotenv>=1,<2
 pytest>=8,<9
+streamlit>=1.49,<2
 

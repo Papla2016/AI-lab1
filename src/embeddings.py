@@ -8,7 +8,7 @@ class Embeddings(Protocol):
 class SentenceTransformerEmbeddings:
     def __init__(self, model_name: str) -> None:
         from sentence_transformers import SentenceTransformer
-        self.model = SentenceTransformer(model_name)
+        self.model = SentenceTransformer(model_name, device="cpu")
 
     def _encode(self, texts: list[str]) -> list[list[float]]:
         return self.model.encode(texts, normalize_embeddings=True).tolist()
