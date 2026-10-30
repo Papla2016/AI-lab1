@@ -6,6 +6,7 @@ import json
 import streamlit as st
 
 from src.config import ROOT, Settings
+from src.error_messages import describe_error
 from src.schemas import SearchResult
 from src.web_service import RAGLabService
 
@@ -126,8 +127,8 @@ def documents_tab(service: RAGLabService, settings: Settings) -> None:
             )
         except ValueError as exc:
             st.error(str(exc))
-        except Exception:
-            st.error("Не удалось создать индекс. Проверьте файлы, embedding-модель и каталог storage/.")
+        except Exception as exc:
+            st.error(f"Индексация не выполнена: {describe_error(exc)}")
     if st.session_state.get("lab_index"):
         summary = st.session_state["lab_index"]
         st.caption(f"Последняя индексация в этой сессии: {summary.files} файлов, {summary.chunks} чанков.")
@@ -148,8 +149,8 @@ def search_tab(service: RAGLabService, options: dict) -> None:
             st.session_state["lab_search_results"] = (before, after)
         except ValueError as exc:
             st.warning(str(exc))
-        except Exception:
-            st.error("Поиск не выполнен. Сначала проиндексируйте документы и проверьте embedding-модель.")
+        except Exception as exc:
+            st.error(f"Поиск не выполнен: {describe_error(exc)}")
     result = st.session_state.get("lab_search_results")
     if result:
         before, after = result
@@ -173,8 +174,8 @@ def question_tab(service: RAGLabService, options: dict) -> None:
             st.session_state["lab_last_answer"] = (answer, trace)
         except ValueError as exc:
             st.error(f"Ошибка проверки результата: {exc}")
-        except Exception:
-            st.error("RAG не выполнен. Проверьте индекс, параметры .env и доступность LLM.")
+        except Exception as exc:
+            st.error(f"RAG не выполнен: {describe_error(exc)}")
     result = st.session_state.get("lab_last_answer")
     if result:
         show_answer(*result)
@@ -233,7 +234,7 @@ def comparison_tab(service: RAGLabService, options: dict) -> None:
                                 ),
                             )
                         except Exception as exc:
-                            row["error"] = type(exc).__name__
+                            row["error"] = describe_error(exc)
                         rows.append(row)
                         progress.progress(len(rows) / total)
             st.session_state["lab_comparison_rows"] = rows
@@ -269,8 +270,8 @@ def safety_tab(service: RAGLabService, options: dict) -> None:
                     options["final_k"], options["rerank"], routing=True,
                 )
             st.session_state["lab_safety_result"] = (baseline, answer, trace)
-        except Exception:
-            st.error("Не удалось провести эксперимент. Проверьте работу LLM и индекс.")
+        except Exception as exc:
+            st.error(f"Эксперимент не выполнен: {describe_error(exc)}")
     result = st.session_state.get("lab_safety_result")
     if result:
         baseline, answer, trace = result
@@ -307,6 +308,21 @@ def main() -> None:
                               help="При отключении принудительно выполняется RAG. В сравнении маршрутизация отключена.")
         st.divider()
         st.caption(f"LLM: {settings.llm_model}")
+        if st.button("Проверить LLM API", help="Проверяет модель и JSON-режим без Chroma, embeddings и индекса."):
+            try:
+                with st.spinner("Проверка LLM API…"):
+                    result = service.llm.generate(
+                        'Верните строго JSON объект вида {"status":"ok"}.',
+                        "Проверка подключения. Верните JSON со status=ok.",
+                    )
+                decoded = json.loads(result)
+                if isinstance(decoded, dict) and decoded.get("status") == "ok":
+                    st.success("LLM отвечает и поддерживает используемый JSON-режим.")
+                else:
+                    st.warning("LLM ответила, но вернула неожиданный JSON.")
+                    st.json(decoded)
+            except Exception as exc:
+                st.error(f"Проверка LLM API: {describe_error(exc)}")
         st.caption(f"Embeddings: {settings.embedding_model}")
         st.caption("Ключ API из .env не показывается.")
     options = {
